@@ -1,47 +1,29 @@
 '''
-Shift Map Analysis for Image Restoration
-Reference: Correcction of Distorted Underwater Images using Shift Map Analysis
-
-Available datasets:
-- mp4:
-    Knife.mp4
-    Heater1.mp4
-    Heater2.mp4
-    Pool1.mp4
-    Pool2.mp4
-    Pool3.mp4
-- mat:
-    expdata_brick.mat
-    expdata_checkboard.mat
-    middleFonts2data.mat
-    expdata_large.mat
-    expdata_small.mat
-    expdata_tiny.mat
+Function class
 '''
 
-#Imports
+'''
+Imports
+'''
 import cv2
 import scipy
 import numpy as np
+import pywt
+import math
 from scipy.io import loadmat
-import matplotlib.pyplot as plt
-import time
-
-#Unchangeable global variables
-frames = []
-frames_x = 0
-frames_y = 0
-frames_z = 0
-
-#Changeable global variables
-pixelMultiplier = 255
-upscaler = 1
-
-# -1. Load image frames with OpenCV
-from scipy.misc import imresize
 from skimage.transform import rescale, resize, downscale_local_mean
-def loadImage(fileName):
-    global frames, frames_x, frames_y, frames_z, pixelMultiplier, upscaler
+
+'''
+Grayscale image loader
+'''
+def loadMonoImage(fileName):
+    frames = []
+    frames_x = 0
+    frames_y = 0
+    frames_z = 0    
+    pixelMultiplier = 255
+    upscaler = 1
+    
     # Reading MATLAB .mat file
     if(fileName.endswith(".mat")):
         frames = loadmat(fileName, appendmat=False).get('frames')   
@@ -76,9 +58,62 @@ def loadImage(fileName):
     
     frames_x,frames_y,frames_z = np.shape(frames) 
     print("Image loaded:", frames_x, frames_y, frames_z)   
+    return frames
 
+'''
+Color image loader
+'''
+def loadColorImage(fileName):    
+    framesR = [];
+    framesG = [];
+    framesB = [];
+    frames_x = 0;
+    frames_y = 0;
+    frames_z = 0;
+    rescaler = 0.25
+    
+    cap = cv2.VideoCapture(fileName)        
+    ret, frame = cap.read()
+    f = rescale(frame[:,:,0], rescaler, anti_aliasing=True)
+    frames_x,frames_y = np.shape(f)
+    frames_z = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()            
+    
+    framesR = np.zeros((frames_x,frames_y,frames_z))
+    framesG = np.zeros((frames_x,frames_y,frames_z))
+    framesB = np.zeros((frames_x,frames_y,frames_z))
+    
+    cap = cv2.VideoCapture(fileName)                
+    fc = 0
+    ret = True
+    while (fc < frames_z  and ret):
+        ret, frame = cap.read()
+        frameBTemp, frameGTemp, frameRTemp = cv2.split(frame)    
+        framesB[:,:,fc] = rescale(frameBTemp, rescaler, anti_aliasing=True)  
+        framesG[:,:,fc] = rescale(frameGTemp, rescaler, anti_aliasing=True)   
+        framesR[:,:,fc] = rescale(frameRTemp, rescaler, anti_aliasing=True)                  
+        fc += 1   
+    cap.release()        
+
+    frames_x,frames_y,frames_z = np.shape(framesR) 
+    print("Image loaded:", frames_x, frames_y, frames_z)   
+    return framesR, framesG, framesB
+
+'''
+Gap filling for forward mapping
+'''
+def denoise(input): 
+    input = np.float32(input)
+    ret, mask = cv2.threshold(input,1,255, cv2.THRESH_BINARY_INV)
+    mask = mask.astype('uint8')
+    input = cv2.inpaint(input,mask,3,cv2.INPAINT_TELEA)     
+    return input 
+
+'''
+Forward mapping according to warping field
+'''
 def forWardDewarping(input, shiftRuleX, shiftRuleY):
-    global frames_x, frames_y
+    frames_x,frames_y = np.shape(input)
     output = np.zeros_like(input)
     for i in range (frames_x):
         for j in range (frames_y):
@@ -93,10 +128,14 @@ def forWardDewarping(input, shiftRuleX, shiftRuleY):
             if(yNew < 0):
                 yNew = 0    
             output[xNew,yNew] = input[i,j]
+    output = denoise(output)
     return output
 
+'''
+Backward mapping according to warping field
+'''
 def backDewarping(input, shiftRuleX, shiftRuleY):
-    global frames_x, frames_y
+    frames_x, frames_y = np.shape(input)
     output = np.zeros_like(input)
     for i in range (frames_x):
         for j in range (frames_y):
@@ -113,7 +152,9 @@ def backDewarping(input, shiftRuleX, shiftRuleY):
             output[i,j] = input[xNew,yNew]
     return output 
 
-# This function does the coefficient fusing according to the fusion method
+'''
+Wavelet coefficient fusion rule
+'''
 def fuseCoeff(cooef1, cooef2, method):
     if (method == 'mean'):
         cooef = (cooef1 + cooef2)/2
@@ -130,7 +171,9 @@ def fuseCoeff(cooef1, cooef2, method):
         cooef = []
     return cooef
 
-import pywt
+'''
+Image fusion with wavelet coefficient decomposition
+'''
 def waveletFuse(input1,input2):
     ## Fusion algo   
     # First: Do wavelet transform on each image
@@ -154,26 +197,11 @@ def waveletFuse(input1,input2):
     fusedImage = pywt.waverec2(fusedCooef, wavelet)        
     return fusedImage
 
-def denoise(input): 
-    input = np.float32(input)
-    ret, mask = cv2.threshold(input,1,255, cv2.THRESH_BINARY_INV)
-    mask = mask.astype('uint8')
-    input = cv2.inpaint(input,mask,3,cv2.INPAINT_TELEA)     
-    return input 
-
-#Main method 
-import math
-def main(argv):
-    global frames, frames_x, frames_y, frames_z
-    
-    Directory = "Datasets/"
-    fileName = argv
-    print(Directory+fileName)
-    
-    tic = time.time()
-    loadImage(Directory+fileName) # call for loading image (step 1)   
-    original = frames[:,:,0]
-    
+'''
+Adjacent image fusion procedure
+'''
+def processStack(frames):
+    frames_x, frames_y, frames_z = np.shape(frames)
     while(frames_z>1):
         frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
         for i in range(0, frames_z-1,2):
@@ -194,18 +222,6 @@ def main(argv):
                 frames_new[:,:,(i//2)+1] = frames[:,:,-1]
             
         frames = frames_new
-        frames_x, frames_y, frames_z = np.shape(frames)
-        
-    output = frames[:,:,0]
-    toc = time.time()
-    
-    print("Processing time", toc-tic, "seconds")
-    plt.subplot(1,2,1)
-    plt.imshow(original, cmap="gray")
-    plt.subplot(1,2,2)
-    plt.imshow(output, cmap="gray")
-    plt.show()    
-
-import sys 
-if __name__ == "__main__":
-    main(sys.argv[1])
+        frames_x, frames_y, frames_z = np.shape(frames)        
+    output = frames[:,:,0] 
+    return output
