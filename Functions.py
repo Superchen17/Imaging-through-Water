@@ -10,6 +10,7 @@ import scipy
 import numpy as np
 import pywt
 import math
+import queue
 from scipy.io import loadmat
 from skimage.transform import rescale, resize, downscale_local_mean
 
@@ -200,28 +201,65 @@ def waveletFuse(input1,input2):
 '''
 Adjacent image fusion procedure
 '''
-def processStack(frames):
+def processStack(frames, template, mode):
     frames_x, frames_y, frames_z = np.shape(frames)
-    while(frames_z>1):
-        frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
-        for i in range(0, frames_z-1,2):
-            print("Iteration", i, "/", frames_z-1)
-            reference = frames[:,:,i]
-            target = frames[:,:,i+1]
+    
+    if(mode == 'mono'):
+        while(frames_z>1):
+            frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
+            for i in range(0, frames_z-1,2):
+                print("Iteration", i, "/", frames_z-1)
+                reference = frames[:,:,i]
+                target = frames[:,:,i+1]
+                
+                flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,15,3,5,1.2,0)/2
+                warped_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])
+                flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,15,3,5,1.2,0)/2                                    
+                warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
+                
+                warped = waveletFuse(warped_rt,warped_tr)
+                warped = cv2.resize(warped,(frames_y,frames_x))  
+                frames_new[:,:,i//2] = warped
+                
+                if(i == frames_z-3):
+                    frames_new[:,:,(i//2)+1] = frames[:,:,-1]
+                
+            frames = frames_new
+            frames_x, frames_y, frames_z = np.shape(frames)        
+        output = frames[:,:,0] 
+    elif(mode == 'color'):
+        while(frames_z>1):
+            frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
+            temp_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
             
-            flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,15,3,5,1.2,0)/2
-            warped_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])
-            flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,15,3,5,1.2,0)/2                                    
-            warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
-            
-            warped = waveletFuse(warped_rt,warped_tr)
-            warped = cv2.resize(warped,(frames_y,frames_x))  
-            frames_new[:,:,i//2] = warped
-            
-            if(i == frames_z-3):
-                frames_new[:,:,(i//2)+1] = frames[:,:,-1]
-            
-        frames = frames_new
-        frames_x, frames_y, frames_z = np.shape(frames)        
-    output = frames[:,:,0] 
+            for i in range(0, frames_z-1,2):
+                print("Iteration", i, "/", frames_z-1)
+                reference = template[:,:,i]
+                target = template[:,:,i+1]
+                frame_rt = frames[:,:,i]
+                frame_tr = frames[:,:,i+1]                
+                
+                flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,15,3,5,1.2,0)/2
+                template_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])                
+                warped_rt = backDewarping(frame_rt, flow_rt[:,:,1], flow_rt[:,:,0])
+                flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,15,3,5,1.2,0)/2     
+                template_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0])                 
+                warped_tr = backDewarping(frame_tr, flow_tr[:,:,1], flow_tr[:,:,0]) 
+                
+                warped_frame = waveletFuse(warped_rt,warped_tr)
+                warped_frame = cv2.resize(warped_frame,(frames_y,frames_x))  
+                warped_temp = waveletFuse(template_rt,template_tr)
+                warped_temp = cv2.resize(warped_temp,(frames_y,frames_x))                  
+                frames_new[:,:,i//2] = warped_frame
+                temp_new[:,:,i//2] = warped_temp
+                
+                if(i == frames_z-3):
+                    frames_new[:,:,(i//2)+1] = frames[:,:,-1]
+                    temp_new[:,:,(i//2)+1] = template[:,:,-1]                   
+                
+            frames = frames_new
+            template = temp_new
+            frames_x, frames_y, frames_z = np.shape(frames)        
+        output = frames[:,:,0]            
     return output
+
