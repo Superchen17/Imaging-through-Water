@@ -24,6 +24,7 @@ def loadMonoImage(fileName):
     frames_z = 0    
     pixelMultiplier = 255
     upscaler = 1
+    rescaler = 0.25    
     
     # Reading MATLAB .mat file
     if(fileName.endswith(".mat")):
@@ -36,12 +37,14 @@ def loadMonoImage(fileName):
             frames_new[:,:,i] = image        
         frames = frames_new  
         
-    # Reading .mp4 file    
+    # Reading .mp4 file  
     elif(fileName.endswith(".mp4")):
         cap = cv2.VideoCapture(fileName)        
         frames_x = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frames_y = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frames_z = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if(frames_z > 60):
+            frames_z = 60
         frames = np.zeros((frames_x,frames_y,frames_z))
         fc = 0
         ret = True
@@ -49,13 +52,9 @@ def loadMonoImage(fileName):
             ret, frame = cap.read()
             frames[:,:,fc] = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
             fc += 1   
-        cap.release()            
-        image = rescale(frames[:,:,0], 0.25, anti_aliasing=True)
-        frames_new = np.zeros((np.shape(image)[0],np.shape(image)[1],np.shape(frames)[2]))
-        for i in range(np.shape(frames)[2]):
-            image = rescale(frames[:,:,i], 0.25, anti_aliasing=True)
-            frames_new[:,:,i] = image        
-        frames = frames_new     
+        cap.release()  
+        
+        frames = resize(frames,(frames_x//4,frames_y//4), anti_aliasing=True)
     
     frames_x,frames_y,frames_z = np.shape(frames) 
     print("Image loaded:", frames_x, frames_y, frames_z)   
@@ -74,29 +73,30 @@ def loadColorImage(fileName):
     rescaler = 0.25
     
     cap = cv2.VideoCapture(fileName)        
-    ret, frame = cap.read()
-    f = rescale(frame[:,:,0], rescaler, anti_aliasing=True)
-    frames_x,frames_y = np.shape(f)
+    frames_x = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    frames_y = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frames_z = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()            
-    
+    if(frames_z > 60):
+        frames_z = 60    
     framesR = np.zeros((frames_x,frames_y,frames_z))
     framesG = np.zeros((frames_x,frames_y,frames_z))
-    framesB = np.zeros((frames_x,frames_y,frames_z))
+    framesB = np.zeros((frames_x,frames_y,frames_z))    
     
-    cap = cv2.VideoCapture(fileName)                
     fc = 0
     ret = True
     while (fc < frames_z  and ret):
         ret, frame = cap.read()
-        frameBTemp, frameGTemp, frameRTemp = cv2.split(frame)    
-        framesB[:,:,fc] = rescale(frameBTemp, rescaler, anti_aliasing=True)  
-        framesG[:,:,fc] = rescale(frameGTemp, rescaler, anti_aliasing=True)   
-        framesR[:,:,fc] = rescale(frameRTemp, rescaler, anti_aliasing=True)                  
+        framesB[:,:,fc] = frame[:,:,0]
+        framesG[:,:,fc] = frame[:,:,1]
+        framesR[:,:,fc] = frame[:,:,2]       
         fc += 1   
-    cap.release()        
+    cap.release()     
 
-    frames_x,frames_y,frames_z = np.shape(framesR) 
+    framesR = resize(framesR,(frames_x//4,frames_y//4), anti_aliasing=True)
+    framesG = resize(framesG,(frames_x//4,frames_y//4), anti_aliasing=True)
+    framesB = resize(framesB,(frames_x//4,frames_y//4), anti_aliasing=True)  
+    
+    frames_x,frames_y,frames_z = np.shape(framesG) 
     print("Image loaded:", frames_x, frames_y, frames_z)   
     return framesR, framesG, framesB
 
@@ -199,67 +199,66 @@ def waveletFuse(input1,input2):
     return fusedImage
 
 '''
+Quality map generation 
+M = J*G
+'''
+from scipy.ndimage import gaussian_filter  
+def getQualityMap(input):
+    global frames_x, frames_y
+    sig = np.std(input)   
+    grad_x = cv2.Sobel(input,cv2.CV_64F,1,0,ksize=3)
+    grad_y = cv2.Sobel(input,cv2.CV_64F,0,1,ksize=3)
+    grad = cv2.addWeighted(np.absolute(grad_x), 0.5, np.absolute(grad_y), 0.5, 0)
+    sobel = (2*math.pi*(sig**2))*gaussian_filter(grad, sigma=sig)          
+    return sobel 
+
+'''
+Image fusion with sharpness analysis
+'''
+def sharpFuse(input1, input2):
+    frames_x,frames_y = np.shape(input1)
+    quality1 = getQualityMap(input1)
+    quality2 = getQualityMap(input2)
+    deltaMap = np.zeros_like(input1)
+    for x in range(frames_x):
+        for y in range(frames_y):
+            if(quality1[x,y] > quality2[x,y]):
+                deltaMap[x,y] = quality1[x,y]-quality2[x,y]
+    if(np.max(deltaMap != 0)):
+        ka = 1/np.max(deltaMap)
+        output = (1-ka*deltaMap)*input2+ka*deltaMap*input1 
+    else:
+        output = input1
+    return output
+    
+'''
 Adjacent image fusion procedure
 '''
-def processStack(frames, template, mode):
+def processStack(frames):
     frames_x, frames_y, frames_z = np.shape(frames)
     
-    if(mode == 'mono'):
-        while(frames_z>1):
-            frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
-            for i in range(0, frames_z-1,2):
-                print("Iteration", i, "/", frames_z-1)
-                reference = frames[:,:,i]
-                target = frames[:,:,i+1]
-                
-                flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,15,3,5,1.2,0)/2
-                warped_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])
-                flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,15,3,5,1.2,0)/2                                    
-                warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
-                
-                warped = waveletFuse(warped_rt,warped_tr)
-                warped = cv2.resize(warped,(frames_y,frames_x))  
-                frames_new[:,:,i//2] = warped
-                
-                if(i == frames_z-3):
-                    frames_new[:,:,(i//2)+1] = frames[:,:,-1]
-                
-            frames = frames_new
-            frames_x, frames_y, frames_z = np.shape(frames)        
-        output = frames[:,:,0] 
-    elif(mode == 'color'):
-        while(frames_z>1):
-            frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
-            temp_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
+    while(frames_z>1):
+        frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
+        for i in range(0, frames_z-1,2):
+            print("Iteration", i, "/", frames_z-1)
+            reference = frames[:,:,i]
+            target = frames[:,:,i+1]
             
-            for i in range(0, frames_z-1,2):
-                print("Iteration", i, "/", frames_z-1)
-                reference = template[:,:,i]
-                target = template[:,:,i+1]
-                frame_rt = frames[:,:,i]
-                frame_tr = frames[:,:,i+1]                
-                
-                flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,15,3,5,1.2,0)/2
-                template_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])                
-                warped_rt = backDewarping(frame_rt, flow_rt[:,:,1], flow_rt[:,:,0])
-                flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,15,3,5,1.2,0)/2     
-                template_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0])                 
-                warped_tr = backDewarping(frame_tr, flow_tr[:,:,1], flow_tr[:,:,0]) 
-                
-                warped_frame = waveletFuse(warped_rt,warped_tr)
-                warped_frame = cv2.resize(warped_frame,(frames_y,frames_x))  
-                warped_temp = waveletFuse(template_rt,template_tr)
-                warped_temp = cv2.resize(warped_temp,(frames_y,frames_x))                  
-                frames_new[:,:,i//2] = warped_frame
-                temp_new[:,:,i//2] = warped_temp
-                
-                if(i == frames_z-3):
-                    frames_new[:,:,(i//2)+1] = frames[:,:,-1]
-                    temp_new[:,:,(i//2)+1] = template[:,:,-1]                   
-                
-            frames = frames_new
-            template = temp_new
-            frames_x, frames_y, frames_z = np.shape(frames)        
-        output = frames[:,:,0]            
+            flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,15,3,5,1.2,0)/2
+            warped_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])
+            flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,15,3,5,1.2,0)/2                                    
+            warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
+            
+            warped = waveletFuse(warped_rt,warped_tr)
+            warped = cv2.resize(warped,(frames_y,frames_x))  
+            frames_new[:,:,i//2] = warped
+            
+            if(i == frames_z-3):
+                frames_new[:,:,(i//2)+1] = frames[:,:,-1]
+            
+        frames = frames_new
+        frames_x, frames_y, frames_z = np.shape(frames)        
+    output = frames[:,:,0]
+   
     return output
 
