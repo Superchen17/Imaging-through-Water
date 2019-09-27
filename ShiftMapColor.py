@@ -26,12 +26,16 @@ import time
 import matplotlib.pyplot as plt
 from scipy.io import savemat
 from multiprocessing import Pool
+import warnings
 
-def main(fileName, saveFile):    
+def main(fileName, saveFile):
+    #Warning supprssion (Mostly CUDA warnings)    
+    warnings.filterwarnings('ignore')    
+    
+    #Data loading
     Directory = "Datasets/"
     print(Directory+fileName)
     
-    tic = time.time()
     framesR, framesG, framesB = loadColorImage(Directory+fileName)
     frames_x, frames_y, frames_z = np.shape(framesR)
     original = np.zeros((frames_x,frames_y,3), "uint8")
@@ -42,24 +46,34 @@ def main(fileName, saveFile):
     original[:,:,2] = framesB[:,:,0]
     original = Image.fromarray(original)
     
+    #Model execution
+    print("Restoration algorithm started...")    
+    tic = time.time()    
     pool = Pool(processes=3)
-    temp = pool.map(processStack,[framesR,framesG,framesB])
+    temp = pool.map(processStack,[framesR,framesG,framesB])   
+    pool.close()
+    toc = time.time()               
+    
     output[:,:,0] = temp[0] 
     output[:,:,1] = temp[1]  
     output[:,:,2] = temp[2] 
     
     if(int(saveFile)==1):
-        savemat(str(fileName)+'_Color.mat', {'recon':output})
-
+        savemat(str(fileName)+'_Color.mat', {'recon':output})        
     output = Image.fromarray(output)  
       
-    toc = time.time()       
-    print("Processing time", toc-tic, "seconds")
+    print("Algorithm processing time", round(toc-tic, ndigits=2), "seconds")
+    
+    #Output display
+    '''
     plt.subplot(1,2,1)
     plt.imshow(original, cmap="gray")
     plt.subplot(1,2,2)
     plt.imshow(output, cmap="gray")
     plt.show()     
+    '''
+    plt.imshow(output,cmap="gray")
+    plt.show()
 
 import sys 
 if __name__ == "__main__":

@@ -24,30 +24,36 @@ from Functions import loadMonoImage, processStack
 import time
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.io import savemat
-
-def main(fileName, saveFile):    
+from scipy.io import savemat  
+import warnings
+    
+def main(fileName, saveFile=0):
+    #Warning supprssion (Mostly CUDA warnings)
+    warnings.filterwarnings('ignore')
+    
+    #Data loading
     Directory = "Datasets/"
-    print(Directory+fileName)
+    print(Directory+fileName)    
+    frames = loadMonoImage(Directory+fileName) 
     
-    tic = time.time()
-    frames = loadMonoImage(Directory+fileName)  
-    original = frames[:,:,0]
-    frames_x, frames_y = np.shape(original)
-
-    output = processStack(frames) # this is to be parallelised
-    
+    #Model execution
+    print("Restoration algorithm started...") 
+    tic = time.time()    
+    output = processStack(frames)
+    toc = time.time()               
     if(int(saveFile)==1):
-        savemat(str(fileName)+'_Mono.mat', {'recon':output})
+        savemat(str(fileName)+'_Mono.mat', {'recon':output})    
+    print("Algorithm processing time", round(toc-tic, ndigits=2), "seconds")
     
-    toc = time.time()           
-    print("Processing time", toc-tic, "seconds")
+    #Output display
+    '''
     plt.subplot(1,2,1)
-    plt.imshow(original, cmap="gray")
+    plt.imshow(frames[:,:,0],cmap='gray')
     plt.subplot(1,2,2)
+    '''
     plt.imshow(output, cmap="gray")
-    plt.show()    
-
+    plt.show()      
+    
 import sys 
 if __name__ == "__main__":
     main(sys.argv[1], sys.argv[2])
