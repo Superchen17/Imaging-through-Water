@@ -40,7 +40,11 @@ def main(fileName, saveFile=0):
     print("Restoration algorithm started...") 
     tic = time.time()    
     output = processStack(frames)
-    toc = time.time()               
+    toc = time.time() 
+    
+    #Normalize and save
+    if(np.max(output) > 255):
+        output = output*255/np.max(output)
     if(int(saveFile)==1):
         savemat(str(fileName)+'_Mono.mat', {'recon':output})    
     print("Algorithm processing time", round(toc-tic, ndigits=2), "seconds")

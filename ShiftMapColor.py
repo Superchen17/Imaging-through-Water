@@ -54,10 +54,12 @@ def main(fileName, saveFile):
     pool.close()
     toc = time.time()               
     
+    #Normalize and save
     output[:,:,0] = temp[0] 
     output[:,:,1] = temp[1]  
-    output[:,:,2] = temp[2] 
-    
+    output[:,:,2] = temp[2]     
+    if(np.max(output) > 255):
+        output = output*255/np.max(output)      
     if(int(saveFile)==1):
         savemat(str(fileName)+'_Color.mat', {'recon':output})        
     output = Image.fromarray(output)  

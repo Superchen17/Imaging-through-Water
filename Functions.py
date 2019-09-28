@@ -25,15 +25,18 @@ def loadMonoImage(fileName):
     frames_y = 0
     frames_z = 0    
     pixelMultiplier = 255
-    upscaler = 1
     rescaler = 4
     
     # Reading MATLAB .mat file
     if(fileName.endswith(".mat")):
         frames = loadmat(fileName, appendmat=False).get('frames')   
         frames = frames[:,:,0:60]*pixelMultiplier 
-        frames_x,frames_y,frames_z = np.shape(frames)         
-        frames = cv2.resize(frames,(frames_y*upscaler,frames_x*upscaler), interpolation=cv2.INTER_CUBIC)         
+        frames_x,frames_y,frames_z = np.shape(frames) 
+        if(frames_x%2 == 1):
+            frames_x += 1
+        if(frames_y%2 == 1):
+            frames_y += 1        
+        frames = cv2.resize(frames,(frames_y,frames_x), interpolation=cv2.INTER_CUBIC)                
         
     # Reading .mp4 file  
     elif(fileName.endswith(".mp4")):
@@ -134,9 +137,8 @@ def forWardDewarping(input, shiftRuleX, shiftRuleY):
 '''
 Backward mapping accelerated with CUDA
 '''
-'''
 @jit
-def backDewarping(input, shiftRuleX, shiftRuleY):
+def backDewarpingNaive(input, shiftRuleX, shiftRuleY):
     frames_x, frames_y = np.shape(input)
     output = np.zeros_like(input)
     for i in range (frames_x):
@@ -153,37 +155,10 @@ def backDewarping(input, shiftRuleX, shiftRuleY):
                 yNew = 0    
             output[i,j] = input[xNew,yNew]
     return output 
-'''
-'''
-@jit
-def backDewarping(input, shiftRuleX, shiftRuleY):
-    frames_x_ori, frames_y_ori = np.shape(input)
-    upscalar = 2
-    input = cv2.resize(input,(frames_y_ori*upscalar,frames_x_ori*upscalar), interpolation=cv2.INTER_CUBIC) 
-    shiftRuleX = cv2.resize(shiftRuleX,(frames_y_ori*upscalar,frames_x_ori*upscalar), interpolation=cv2.INTER_CUBIC)*upscalar 
-    shiftRuleY = cv2.resize(shiftRuleY,(frames_y_ori*upscalar,frames_x_ori*upscalar), interpolation=cv2.INTER_CUBIC)*upscalar 
-        
-    frames_x, frames_y = np.shape(input)    
-    output = np.zeros_like(input)
-    
-    for i in range (frames_x):
-        for j in range (frames_y):
-            xNew = np.int0(i+shiftRuleX[i,j])
-            yNew = np.int0(j+shiftRuleY[i,j])
-            if(xNew >= frames_x):
-                xNew = frames_x-1
-            if(yNew >= frames_y):
-                yNew = frames_y-1
-            if(xNew < 0):
-                xNew = 0
-            if(yNew < 0):
-                yNew = 0    
-            output[i,j] = input[xNew,yNew]
-            
-    output = cv2.resize(output,(frames_y_ori,frames_x_ori),interpolation=cv2.INTER_CUBIC)     
-    return output 
-'''
 
+'''
+Backward mapping with interpolation
+'''
 @jit
 def backDewarping(input, shiftRuleX, shiftRuleY):
     frames_x_ori, frames_y_ori = np.shape(input)
@@ -230,7 +205,7 @@ Image fusion with wavelet coefficient decomposition
 def waveletFuse(input1,input2):
     ## Fusion algo   
     # First: Do wavelet transform on each image
-    wavelet = 'haar'
+    wavelet = 'bior1.1'
     cooef1 = pywt.wavedec2(input1, wavelet)
     cooef2 = pywt.wavedec2(input2, wavelet)
     
@@ -255,8 +230,8 @@ def waveletFuse(input1,input2):
 Get weight of images with PCA
 '''
 def getPCAWeight(input1,input2):
-    img1 = input1.flatten()
-    img2 = input2.flatten()    
+    img1 = np.abs(input1).flatten()
+    img2 = np.abs(input2).flatten()    
     img1 = img1 - np.mean(img1)
     img2 = img2 - np.mean(img2)
     
@@ -312,6 +287,7 @@ def sharpFuse(input1, input2):
 '''
 Model
 '''
+from skimage.transform import resize
 def processStack(frames):
     frames_x, frames_y, frames_z = np.shape(frames)  
     
@@ -330,8 +306,6 @@ def processStack(frames):
             warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
             
             warped = waveletFuse(warped_rt,warped_tr)
-            warped = cv2.resize(warped,(frames_y,frames_x), interpolation=cv2.INTER_CUBIC) 
-            
             frames_new[:,:,i//2] = warped
 
             if(i == frames_z-3):
