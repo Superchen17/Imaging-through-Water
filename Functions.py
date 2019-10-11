@@ -19,18 +19,23 @@ from numba import jit
 '''
 Grayscale image loader
 '''
-def loadMonoImage(fileName):
+def loadMonoImage(fileName, frameNum):
     frames = []
     frames_x = 0
     frames_y = 0
     frames_z = 0    
     pixelMultiplier = 255
-    rescaler = 4
+    rescaler = 1
     
     # Reading MATLAB .mat file
     if(fileName.endswith(".mat")):
-        frames = loadmat(fileName, appendmat=False).get('frames')   
-        frames = frames[:,:,0:60]*pixelMultiplier 
+        frames = loadmat(fileName, appendmat=False).get('frames')
+        frames_ori = frames
+        
+        for i in range((frameNum//60)):
+            frames = np.concatenate((frames,frames_ori), axis=2)
+        
+        frames = frames[:,:,0:frameNum]*pixelMultiplier 
         frames_x,frames_y,frames_z = np.shape(frames) 
         if(frames_x%2 == 1):
             frames_x += 1
@@ -58,7 +63,7 @@ def loadMonoImage(fileName):
         frames = resize(frames,(frames_x//rescaler,frames_y//rescaler), anti_aliasing=True)
     
     frames_x,frames_y,frames_z = np.shape(frames) 
-    print("Image loaded:", frames_x, frames_y, frames_z)   
+    #print("Image loaded:", frames_x, frames_y, frames_z)   
     return frames
 
 '''
@@ -71,7 +76,7 @@ def loadColorImage(fileName):
     frames_x = 0
     frames_y = 0
     frames_z = 0
-    rescaler = 4
+    rescaler = 1
     
     cap = cv2.VideoCapture(fileName)        
     frames_x = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -102,7 +107,7 @@ def loadColorImage(fileName):
     return framesR, framesG, framesB
 
 '''
-Gap filling for forward mapping
+Gap filling for forward mapping, not used
 '''
 @jit
 def denoise(input): 
@@ -135,12 +140,18 @@ def forWardDewarping(input, shiftRuleX, shiftRuleY):
     return output
 
 '''
-Backward mapping accelerated with CUDA
+Backward mapping accelerated with CUDA, not used
 '''
 @jit
 def backDewarpingNaive(input, shiftRuleX, shiftRuleY):
-    frames_x, frames_y = np.shape(input)
-    output = np.zeros_like(input)
+    frames_x_ori, frames_y_ori = np.shape(input)
+    upscalar = 1
+    input = cv2.resize(input,(frames_y_ori*upscalar,frames_x_ori*upscalar), interpolation=cv2.INTER_CUBIC) 
+    shiftRuleX = cv2.resize(shiftRuleX,(frames_y_ori*upscalar,frames_x_ori*upscalar), interpolation=cv2.INTER_CUBIC)*upscalar 
+    shiftRuleY = cv2.resize(shiftRuleY,(frames_y_ori*upscalar,frames_x_ori*upscalar), interpolation=cv2.INTER_CUBIC)*upscalar
+    frames_x, frames_y = np.shape(input)    
+    output = np.zeros_like(input)    
+    
     for i in range (frames_x):
         for j in range (frames_y):
             xNew = np.int0(i+shiftRuleX[i,j])
@@ -154,6 +165,8 @@ def backDewarpingNaive(input, shiftRuleX, shiftRuleY):
             if(yNew < 0):
                 yNew = 0    
             output[i,j] = input[xNew,yNew]
+            
+    output = cv2.resize(output,(frames_y_ori,frames_x_ori),interpolation=cv2.INTER_CUBIC)     
     return output 
 
 '''
@@ -206,8 +219,8 @@ def waveletFuse(input1,input2):
     ## Fusion algo   
     # First: Do wavelet transform on each image
     wavelet = 'bior1.1'
-    cooef1 = pywt.wavedec2(input1, wavelet)
-    cooef2 = pywt.wavedec2(input2, wavelet)
+    cooef1 = pywt.wavedec2(input1, wavelet, level=4)
+    cooef2 = pywt.wavedec2(input2, wavelet, level=4)
     
     policy = 'merge'        
     # Second: for each level in both image do the fusion according to the desire option
@@ -284,6 +297,14 @@ def sharpFuse(input1, input2):
         output = input1
     return output
 
+def flowEstimation(target,reference):
+    flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,13,3,7,1.5,0)/2
+    flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,13,3,7,1.5,0)/2               
+    warped_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])            
+    warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
+    warped = waveletFuse(warped_rt,warped_tr)    
+    return warped
+
 '''
 Model
 '''
@@ -292,27 +313,24 @@ def processStack(frames):
     frames_x, frames_y, frames_z = np.shape(frames)  
     
     counter = 1
-    maxLevel = math.ceil(math.log2(60))
+    maxLevel = math.ceil(math.log2(frames_z))
     while(frames_z>1):
         print("Iteration", counter, "/", maxLevel)
+        
         frames_new = np.zeros((frames_x,frames_y,math.ceil(frames_z/2)))
-        for i in range(0, frames_z-1,2):
+        for i in range(0,frames_z-1,2):
             reference = frames[:,:,i]
             target = frames[:,:,i+1] 
-            
-            flow_rt = cv2.calcOpticalFlowFarneback(target,reference,None,0.5,3,13,3,7,1.5,0)/2
-            flow_tr = cv2.calcOpticalFlowFarneback(reference,target,None,0.5,3,13,3,7,1.5,0)/2               
-            warped_rt = backDewarping(reference, flow_rt[:,:,1], flow_rt[:,:,0])            
-            warped_tr = backDewarping(target, flow_tr[:,:,1], flow_tr[:,:,0]) 
-            
-            warped = waveletFuse(warped_rt,warped_tr)
+
+            warped = flowEstimation(target,reference)
             frames_new[:,:,i//2] = warped
 
             if(i == frames_z-3):
-                frames_new[:,:,(i//2)+1] = frames[:,:,-1]
-            
+                frameTemp = flowEstimation(frames[:,:,-1],frames[:,:,-2])
+                frames_new[:,:,(i//2)+1] = frameTemp       
+        
         frames = frames_new
-        frames_x, frames_y, frames_z = np.shape(frames)   
+        frames_x, frames_y, frames_z = np.shape(frames)  
         counter += 1
     output = frames[:,:,0]
    

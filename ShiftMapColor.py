@@ -13,7 +13,7 @@ Available datasets:
 - mat:
     expdata_brick.mat (mono)
     expdata_checkboard.mat (mono)
-    middleFonts2data.mat (mono)
+    expdata_middle.mat (mono)
     expdata_large.mat (mono)
     expdata_small.mat (mono)
     expdata_tiny.mat (mono)
@@ -67,15 +67,11 @@ def main(fileName, saveFile):
     print("Algorithm processing time", round(toc-tic, ndigits=2), "seconds")
     
     #Output display
-    '''
-    plt.subplot(1,2,1)
-    plt.imshow(original, cmap="gray")
-    plt.subplot(1,2,2)
-    plt.imshow(output, cmap="gray")
-    plt.show()     
-    '''
     plt.imshow(output,cmap="gray")
+    plt.axis('off')        
     plt.show()
+    
+    return output
 
 import sys 
 if __name__ == "__main__":

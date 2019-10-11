@@ -13,7 +13,7 @@ Available datasets:
 - mat:
     expdata_brick.mat (mono)
     expdata_checkboard.mat (mono)
-    middleFonts2data.mat (mono)
+    expdata_middle.mat (mono)
     expdata_large.mat (mono)
     expdata_small.mat (mono)
     expdata_tiny.mat (mono)
@@ -27,14 +27,14 @@ import numpy as np
 from scipy.io import savemat  
 import warnings
     
-def main(fileName, saveFile=0):
+def main(fileName, frameNum, saveFile=0):
     #Warning supprssion (Mostly CUDA warnings)
     warnings.filterwarnings('ignore')
     
     #Data loading
     Directory = "Datasets/"
     print(Directory+fileName)    
-    frames = loadMonoImage(Directory+fileName) 
+    frames = loadMonoImage(Directory+fileName, int(frameNum)) 
     
     #Model execution
     print("Restoration algorithm started...") 
@@ -42,7 +42,9 @@ def main(fileName, saveFile=0):
     output = processStack(frames)
     toc = time.time() 
     
-    #Normalize and save
+    #Normalize and save   
+    if(np.min(output) < 0):
+        output = output + np.abs(np.min(output))
     if(np.max(output) > 255):
         output = output*255/np.max(output)
     if(int(saveFile)==1):
@@ -50,14 +52,12 @@ def main(fileName, saveFile=0):
     print("Algorithm processing time", round(toc-tic, ndigits=2), "seconds")
     
     #Output display
-    '''
-    plt.subplot(1,2,1)
-    plt.imshow(frames[:,:,0],cmap='gray')
-    plt.subplot(1,2,2)
-    '''
     plt.imshow(output, cmap="gray")
-    plt.show()      
+    plt.axis('off')        
+    plt.show() 
+    
+    return output
     
 import sys 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], sys.argv[3])
