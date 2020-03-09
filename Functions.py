@@ -48,9 +48,10 @@ def loadMonoImage(fileName, frameNum):
         cap = cv2.VideoCapture(fileName)        
         frames_x = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         frames_y = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frames_z = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if(frames_z > 60):
-            frames_z = 60
+        frames_z = frameNum
+
+        if(frames_z > 128):
+            frames_z = 128
         frames = np.zeros((frames_x,frames_y,frames_z))
         fc = 0
         ret = True
@@ -63,13 +64,12 @@ def loadMonoImage(fileName, frameNum):
         frames = resize(frames,(frames_x//rescaler,frames_y//rescaler), anti_aliasing=True)
     
     frames_x,frames_y,frames_z = np.shape(frames) 
-    #print("Image loaded:", frames_x, frames_y, frames_z)   
     return frames
 
 '''
 Color image loader
 '''
-def loadColorImage(fileName):    
+def loadColorImage(fileName, frameNum):    
     framesR = []
     framesG = []
     framesB = []
@@ -81,9 +81,10 @@ def loadColorImage(fileName):
     cap = cv2.VideoCapture(fileName)        
     frames_x = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     frames_y = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frames_z = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if(frames_z > 60):
-        frames_z = 60    
+    frames_z = frameNum
+
+    if(frames_z > 128):
+        frames_z = 128    
     framesR = np.zeros((frames_x,frames_y,frames_z))
     framesG = np.zeros((frames_x,frames_y,frames_z))
     framesB = np.zeros((frames_x,frames_y,frames_z))    
@@ -103,7 +104,6 @@ def loadColorImage(fileName):
     framesB = resize(framesB,(frames_x//rescaler,frames_y//rescaler), anti_aliasing=True)  
     
     frames_x,frames_y,frames_z = np.shape(framesG) 
-    print("Image loaded:", frames_x, frames_y, frames_z)   
     return framesR, framesG, framesB
 
 '''

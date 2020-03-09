@@ -28,7 +28,7 @@ from scipy.io import savemat
 from multiprocessing import Pool
 import warnings
 
-def main(fileName, saveFile):
+def main(fileName, frameNum, saveFile):
     #Warning supprssion (Mostly CUDA warnings)    
     warnings.filterwarnings('ignore')    
     
@@ -36,7 +36,7 @@ def main(fileName, saveFile):
     Directory = "Datasets/"
     print(Directory+fileName)
     
-    framesR, framesG, framesB = loadColorImage(Directory+fileName)
+    framesR, framesG, framesB = loadColorImage(Directory+fileName, int(frameNum))
     frames_x, frames_y, frames_z = np.shape(framesR)
     original = np.zeros((frames_x,frames_y,3), "uint8")
     output = np.zeros((frames_x,frames_y,3), "uint8")
@@ -78,4 +78,4 @@ def main(fileName, saveFile):
 
 import sys 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], sys.argv[3])
