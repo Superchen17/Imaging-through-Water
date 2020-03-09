@@ -52,6 +52,9 @@ def main(fileName, frameNum, saveFile=0):
     print("Algorithm processing time", round(toc-tic, ndigits=2), "seconds")
     
     #Output display
+    plt.subplot(1,2,1)
+    plt.imshow(frames[:,:,0], cmap="gray")
+    plt.subplot(1,2,2)
     plt.imshow(output, cmap="gray")
     plt.axis('off')        
     plt.show() 
